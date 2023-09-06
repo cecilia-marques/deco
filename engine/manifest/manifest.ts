@@ -12,7 +12,10 @@ import {
 import { PromiseOrValue } from "../../engine/core/utils.ts";
 import { integrityCheck } from "../../engine/integrity.ts";
 import defaultResolvers from "../../engine/manifest/defaults.ts";
-import { getComposedConfigStore } from "../../engine/releases/provider.ts";
+import {
+  getComposedConfigStore,
+  Release,
+} from "../../engine/releases/provider.ts";
 import { context } from "../../live.ts";
 import { LiveConfig } from "../../types.ts";
 
@@ -78,6 +81,28 @@ const siteName = (): string | undefined => {
   return siteName ?? context.namespace!;
 };
 
+export const buildResolver = <
+  T extends AppManifest,
+  TContext extends BaseContext,
+>(
+  manifest: T,
+  release: Release,
+): [ReleaseResolver<TContext>, T] => {
+  const [newManifest, resolvers, recovers] = (blocks() ?? []).reduce(
+    (curr, acc) => buildRuntime<T, TContext>(curr, acc),
+    [manifest, {}, []] as [T, ResolverMap<TContext>, DanglingRecover[]],
+  );
+  return [
+    new ReleaseResolver<TContext>({
+      resolvers: { ...resolvers, ...defaultResolvers },
+      release,
+      danglingRecover: recovers.length > 0
+        ? buildDanglingRecover(recovers)
+        : undefined,
+    }),
+    newManifest,
+  ];
+};
 export const $live = <T extends AppManifest>(
   m: T,
   siteInfo?: SiteInfo,
@@ -93,10 +118,6 @@ export const $live = <T extends AppManifest>(
   }
   context.namespace ??= `deco-sites/${currentSite}`;
   context.site = currentSite;
-  const [newManifest, resolvers, recovers] = (blocks() ?? []).reduce(
-    (curr, acc) => buildRuntime<AppManifest, FreshContext>(curr, acc),
-    [m, {}, []] as [AppManifest, ResolverMap<FreshContext>, DanglingRecover[]],
-  );
   const provider = getComposedConfigStore(
     context.namespace!,
     context.site,
@@ -104,13 +125,7 @@ export const $live = <T extends AppManifest>(
     useLocalStorageOnly,
   );
   context.release = provider;
-  const resolver = new ReleaseResolver<FreshContext>({
-    resolvers: { ...resolvers, ...defaultResolvers },
-    release: provider,
-    danglingRecover: recovers.length > 0
-      ? buildDanglingRecover(recovers)
-      : undefined,
-  });
+  const [resolver, newManifest] = buildResolver(m, provider);
 
   if (shouldCheckIntegrity) {
     provider.state().then(

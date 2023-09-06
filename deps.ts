@@ -25,8 +25,10 @@ export type { JSX } from "https://esm.sh/preact@10.16.0?pin=102";
 export type {
   Diff,
   Intersection,
+  OmitByValue,
   OptionalKeys,
   Overwrite,
+  PickByValue,
   RequiredKeys,
   UnionToIntersection,
 } from "https://esm.sh/utility-types@3.10.0";

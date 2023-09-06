@@ -47,7 +47,7 @@ const withOverrides = (
 
 export class ReleaseResolver<TContext extends BaseContext = BaseContext> {
   protected release: Release;
-  protected resolvers: ResolverMap<TContext>;
+  protected resolvers: TContext["resolvers"];
   protected resolvables?: ResolvableMap;
   protected danglingRecover?: Resolver;
   protected runOncePerRelease: Record<string, SyncOnce<any>>;
@@ -117,7 +117,7 @@ export class ReleaseResolver<TContext extends BaseContext = BaseContext> {
     options?: ResolveOptions,
   ) =>
   <T = any>(
-    typeOrResolvable: string | Resolvable<T>,
+    typeOrResolvable: string | Resolvable<T, TContext, TContext["resolvers"]>,
     overrideOptions?: Partial<ResolveOptions>,
     partialCtx: Partial<Omit<TContext, keyof BaseContext>> = {},
   ): Promise<T> => {
@@ -128,7 +128,7 @@ export class ReleaseResolver<TContext extends BaseContext = BaseContext> {
   };
 
   public resolve = async <T = any>(
-    typeOrResolvable: string | Resolvable<T>,
+    typeOrResolvable: string | Resolvable<T, TContext, TContext["resolvers"]>,
     context: Omit<TContext, keyof BaseContext>,
     options?: ResolveOptions,
   ): Promise<T> => {
@@ -141,7 +141,7 @@ export class ReleaseResolver<TContext extends BaseContext = BaseContext> {
     });
     const resolvers = this.getResolvers();
     const currentOnce = this.runOncePerRelease;
-    const baseCtx: BaseContext<TContext> = {
+    const baseCtx: BaseContext<TContext["resolvers"], TContext> = {
       danglingRecover: this.danglingRecover,
       resolve: _resolve as ResolveFunc,
       resolveId: crypto.randomUUID(),
@@ -173,7 +173,7 @@ export class ReleaseResolver<TContext extends BaseContext = BaseContext> {
         : {},
     );
     function _resolve<T>(
-      typeOrResolvable: string | Resolvable<T>,
+      typeOrResolvable: string | Resolvable<T, TContext, TContext["resolvers"]>,
       overrideOptions?: Partial<ResolveOptions>,
       partialCtx: Partial<Omit<TContext, keyof BaseContext>> = {},
     ): Promise<T> {

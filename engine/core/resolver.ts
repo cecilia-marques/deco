@@ -9,7 +9,6 @@ import {
   isAwaitable,
   notUndefined,
   PromiseOrValue,
-  UnPromisify,
 } from "../../engine/core/utils.ts";
 import { identity } from "../../utils/object.ts";
 import { createServerTimings } from "../../utils/timings.ts";
@@ -23,7 +22,7 @@ export class DanglingReference extends Error {
   }
 }
 export type ResolveFunc = <T = any, TContext extends BaseContext = BaseContext>(
-  data: string | Resolvable<T>,
+  data: string | Resolvable<T, TContext, TContext["resolvers"]>,
   options?: Partial<ResolveOptions>,
   partialCtx?: Partial<Omit<TContext, keyof BaseContext>>,
 ) => Promise<T>;
@@ -41,13 +40,16 @@ export type ExtensionFunc<TContext extends BaseContext = BaseContext> = (
   opts: ExtensionOptions<TContext>,
 ) => void;
 
-export interface BaseContext<TContext extends BaseContext = any> {
+export interface BaseContext<
+  TContext extends BaseContext = any,
+  TResolverMap extends ResolverMap = ResolverMap<any>,
+> {
   resolveChain: FieldResolver[];
   resolveId: string;
   resolve: ResolveFunc;
   monitoring?: Monitoring;
-  resolvables: Record<string, Resolvable<any>>;
-  resolvers: Record<string, Resolver>;
+  resolvables: Record<string, Resolvable<any, TContext, TResolverMap>>;
+  resolvers: TResolverMap;
   danglingRecover?: Resolver;
   resolveHints: ResolveHints;
   extend: ExtensionFunc<TContext>;
@@ -79,40 +81,12 @@ export type FieldResolver =
   | DanglingFieldResolver;
 
 export type ResolveChain = FieldResolver[];
-export type ResolvesTo<
-  T,
-  TContext extends BaseContext = BaseContext,
-  TResolverMap extends ResolverMap<TContext> = ResolverMap<TContext>,
-> = {
-  [resolver in keyof TResolverMap]: UnPromisify<
-    ReturnType<TResolverMap[resolver]>
-  > extends T ? TResolverMap[resolver]
-    : never;
-};
-
-export type ResolvableObj<
-  T = any,
-  TContext extends BaseContext = BaseContext,
-  RM extends ResolverMap<TContext> = ResolverMap<TContext>,
-> = {
-  [
-    key in keyof Parameters<
-      ResolvesTo<T, TContext, RM>[keyof ResolvesTo<T, TContext, RM>]
-    >[0]
-  ]: Resolvable<
-    Parameters<
-      ResolvesTo<T, TContext, RM>[keyof ResolvesTo<T, TContext, RM>]
-    >[0][key],
-    TContext,
-    RM
-  >;
-};
 
 type ResolveTypeOf<
   T = any,
   TContext extends BaseContext = BaseContext,
   TResolverMap extends ResolverMap<TContext> = ResolverMap<TContext>,
-> = keyof ResolvesTo<T, TContext, TResolverMap>;
+> = ResolvesTo<T, TResolverMap>;
 
 export type ResolvableOf<
   T,
@@ -131,6 +105,13 @@ export type ResolvableOf<
     > ? ResolvableMap[resolvable]
     : never;
 };
+export type ResolvesTo<T, ResolverMap> = {
+  [key in keyof ResolverMap]: ResolverMap[key] extends Resolver<infer TValue>
+    ? TValue extends T
+      ? { resolveType: key; props: Parameters<ResolverMap[key]>[0] }
+    : never
+    : never;
+}[keyof ResolverMap];
 
 export type Resolvable<
   T = any,
@@ -150,9 +131,16 @@ export type Resolvable<
       ResolvableMap
     >;
   }
-  | (ResolvableObj<T, TContext, TResolverMap> & {
-    __resolveType: ResolveTypeOf<T, TContext, TResolverMap>;
-  });
+  | ({
+    __resolveType: ResolvesTo<T, TResolverMap>["resolveType"];
+  } & ResolvesTo<T, TResolverMap>["props"])
+  | {
+    [key in keyof T]: Resolvable<T[key], TContext, TResolverMap, ResolvableMap>;
+  };
+
+export interface HasResolveType {
+  __resolveType: string;
+}
 
 export const isResolvable = <
   T = any,
@@ -163,11 +151,13 @@ export const isResolvable = <
     Resolvable<any, TContext, TResolverMap>
   > = Record<string, any>,
 >(
-  v: T | Resolvable<T, TContext, TResolverMap, TResolvableMap>,
-): v is Resolvable<T, TContext, TResolverMap, TResolvableMap> & {
-  __resolveType: string;
-} => {
-  return (v as { __resolveType: string })?.__resolveType !== undefined;
+  v:
+    | T
+    | string
+    | Resolvable<T, TContext, TResolverMap, TResolvableMap>
+    | HasResolveType,
+): v is HasResolveType => {
+  return (v as HasResolveType)?.__resolveType !== undefined;
 };
 
 export type OnBeforeResolveProps = <T>(props: T) => T;
@@ -280,10 +270,10 @@ export interface Resolved<T> {
 }
 
 export const isResolved = <T>(
-  resolvable: Resolvable<T> | Resolved<T>,
+  resolvable: Resolvable<T> | Resolved<T> | HasResolveType,
 ): resolvable is Resolved<T> => {
   return (isResolvable(resolvable)) &&
-    resolvable.__resolveType === RESOLVE_SHORTCIRCUIT;
+    (resolvable as HasResolveType).__resolveType === RESOLVE_SHORTCIRCUIT;
 };
 
 const resolveTypeOf = <
@@ -484,9 +474,14 @@ export const resolveAny = <
   maybeResolvable:
     | Resolvable<
       T,
-      TContext
+      TContext,
+      any
     >
-    | Resolvable<T & { __resolveType: string }, TContext>,
+    | Resolvable<
+      T & { __resolveType: string },
+      TContext,
+      any
+    >,
   context: TContext,
   nullIfDangling = false,
   hints?: HintNode<T> | null,
@@ -512,7 +507,7 @@ export const resolve = <
   T,
   TContext extends BaseContext = BaseContext,
 >(
-  maybeResolvable: string | Resolvable<T, TContext>,
+  maybeResolvable: string | Resolvable<T, TContext, TContext["resolvers"]>,
   context: TContext,
   nullIfDangling = false,
   propsIsResolved = false,

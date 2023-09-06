@@ -223,7 +223,7 @@ export const buildDecoState = <TManifest extends AppManifest = AppManifest>(
       context.state.$live = $live;
     }
 
-    context.state.resolve = ctxResolver;
+    context.state.resolve = ctxResolver as typeof context["state"]["resolve"];
     context.state.release = liveContext.release!;
     const invoker = (
       key: string,

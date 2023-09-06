@@ -16,11 +16,15 @@ export interface BlockModuleRef {
   functionJSDoc?: JSONSchema7;
 }
 
-export type ResolverLike<T = any> = (...args: any[]) => PromiseOrValue<T>;
+export type ResolverLike<
+  T = any,
+  TArgs extends any[] = any[],
+> = (...args: TArgs) => PromiseOrValue<T>;
 export type BlockModule<
-  TDefaultExportFunc extends ResolverLike<T> = ResolverLike,
+  TDefaultExportFunc extends ResolverLike<T, TArgs> = ResolverLike,
   T = TDefaultExportFunc extends ResolverLike<infer TValue> ? TValue : any,
   TSerializable = T,
+  TArgs extends any[] = any[],
 > = {
   default: TDefaultExportFunc;
   invoke?: Resolver<TSerializable, BlockInvocation, any>;
