@@ -1,4 +1,5 @@
 // deno-lint-ignore-file no-explicit-any
+import { OmitByValue } from "../../deps.ts";
 import {
   HintNode,
   ResolveHints,
@@ -41,8 +42,8 @@ export type ExtensionFunc<TContext extends BaseContext = BaseContext> = (
 ) => void;
 
 export interface BaseContext<
-  TContext extends BaseContext = any,
   TResolverMap extends ResolverMap = ResolverMap<any>,
+  TContext extends BaseContext = any,
 > {
   resolveChain: FieldResolver[];
   resolveId: string;
@@ -82,12 +83,6 @@ export type FieldResolver =
 
 export type ResolveChain = FieldResolver[];
 
-type ResolveTypeOf<
-  T = any,
-  TContext extends BaseContext = BaseContext,
-  TResolverMap extends ResolverMap<TContext> = ResolverMap<TContext>,
-> = ResolvesTo<T, TResolverMap>;
-
 export type ResolvableOf<
   T,
   TContext extends BaseContext = BaseContext,
@@ -96,21 +91,24 @@ export type ResolvableOf<
     string,
     Resolvable<any, TContext, TResolverMap>
   > = Record<string, Resolvable<any, TContext, TResolverMap>>,
-> = {
-  [resolvable in keyof ResolvableMap]: ResolvableMap[resolvable] extends
-    Resolvable<
-      T,
-      TContext,
-      TResolverMap
-    > ? ResolvableMap[resolvable]
-    : never;
-};
+> = OmitByValue<
+  {
+    [resolvable in keyof ResolvableMap]: ResolvableMap[resolvable] extends
+      Resolvable<
+        T,
+        TContext,
+        TResolverMap
+      > ? resolvable
+      : never;
+  },
+  never
+>;
 export type ResolvesTo<T, ResolverMap> = {
-  [key in keyof ResolverMap]: ResolverMap[key] extends Resolver<infer TValue>
+  [key in keyof ResolverMap]: ResolverMap[key] extends Resolver<infer TValue, infer Props>
     ? TValue extends T
-      ? { resolveType: key; props: Parameters<ResolverMap[key]>[0] }
-    : never
-    : never;
+      ? { resolveType: key; props: Props }
+    : TValue
+    : TValue;
 }[keyof ResolverMap];
 
 export type Resolvable<
@@ -124,16 +122,31 @@ export type Resolvable<
 > =
   | T
   | {
-    __resolveType: keyof ResolvableOf<
-      T,
-      TContext,
-      TResolverMap,
-      ResolvableMap
+    __resolveType: Omit<
+      ResolvableOf<
+        T,
+        TContext,
+        TResolverMap,
+        ResolvableMap
+      >,
+      ResolvesTo<T, TResolverMap>["resolveType"]
     >;
   }
-  | ({
-    __resolveType: ResolvesTo<T, TResolverMap>["resolveType"];
-  } & ResolvesTo<T, TResolverMap>["props"])
+  | (
+    & {
+      __resolveType: ResolvesTo<T, TResolverMap>["resolveType"];
+    }
+    & {
+      [
+        key in keyof Omit<ResolvesTo<T, TResolverMap>["props"], "__resolveType">
+      ]: Resolvable<
+        Omit<ResolvesTo<T, TResolverMap>["props"], "__resolveType">[key],
+        TContext,
+        TResolverMap,
+        ResolvableMap
+      >;
+    }
+  )
   | {
     [key in keyof T]: Resolvable<T[key], TContext, TResolverMap, ResolvableMap>;
   };
