@@ -1,4 +1,5 @@
 import { register, Registry } from "https://esm.sh/prom-client@14.2.0";
+import { collectMemoryUsage } from "./observe.ts";
 
 // required configuration
 const influxUsr = Deno.env.get("OBS_INFLUX_USR");
@@ -46,6 +47,7 @@ export const collectPromMetrics = () => {
   }
   setInterval(
     async () => {
+      collectMemoryUsage();
       // send metric data to InfluxDB
       for (const register of registries) {
         for (const value of await register.getMetricsAsJSON()) {
