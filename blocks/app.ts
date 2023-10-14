@@ -19,7 +19,12 @@ import {
   ResolverMiddleware,
   ResolverMiddlewareContext,
 } from "../engine/middleware.ts";
-import { DecoManifest, FnContext } from "../types.ts";
+import {
+  DecoManifest,
+  FnContext,
+  FunctionContext,
+  LoaderFunction,
+} from "../types.ts";
 import { resolversFrom } from "./appsUtil.ts";
 import { fnContextFromHttpContext } from "./utils.tsx";
 
@@ -206,6 +211,13 @@ const injectAppStateOnManifest = <
       manifest.loaders ?? {},
       (mod) => ({ ...mod, default: injectAppState(state, mod.default) }),
     ),
+    functions: mapObjKeys(
+      manifest.functions ?? {},
+      (mod) => ({
+        ...mod,
+        default: injectAppStateOnFunctions(state, mod.default),
+      }),
+    ),
   };
 };
 
@@ -286,6 +298,24 @@ export type AppModule<
   AppRuntime
 >;
 
+const injectAppStateOnFunctions = <TState = any>(
+  state: TState,
+  fnProps: LoaderFunction,
+): LoaderFunction => {
+  return (
+    props: any,
+    fnContext: FunctionContext,
+    request: Request,
+  ) => {
+    return fnProps(props, {
+      ...fnContext,
+      state: {
+        ...fnContext?.state,
+        global: { ...(fnContext?.state as any)?.global, ...state },
+      },
+    }, request);
+  };
+};
 const injectAppState = <TState = any>(
   state: TState,
   fnProps: FnProps,
