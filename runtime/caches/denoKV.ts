@@ -325,7 +325,7 @@ export const caches: CacheStorage = {
 
         // Transform 8Kb stream into 64Kb KV stream
         let accumulator = new Uint8Array();
-        const KV_CHUNK_SIZE = 61440; // 60Kb
+        const KV_CHUNK_SIZE = 10000; // 10Kb
         const kvChunks = new TransformStream({
           transform(chunk, controller) {
             if (
