@@ -323,10 +323,21 @@ export const caches: CacheStorage = {
         const metaKey = await keyForRequest(req);
         const oldMeta = await kv.get<Metadata>(metaKey);
 
-        // Transform 8Kb stream into 64Kb KV stream
+        // Transform unknown Kb stream into 63Kb KV stream
         let accumulator = new Uint8Array();
-        const KV_CHUNK_SIZE = 10000; // 10Kb
-        const kvChunks = new TransformStream({
+        const KV_CHUNK_SIZE = 63488; // 63Kb
+        const splitStream = new TransformStream<Uint8Array, Uint8Array>({
+          transform(chunk, controller) {
+            for (
+              let bytes = 0;
+              bytes < chunk.byteLength;
+              bytes += KV_CHUNK_SIZE
+            ) {
+              controller.enqueue(chunk.slice(bytes, bytes + KV_CHUNK_SIZE));
+            }
+          },
+        });
+        const accStream = new TransformStream<Uint8Array, Uint8Array>({
           transform(chunk, controller) {
             if (
               accumulator.byteLength + chunk.byteLength > KV_CHUNK_SIZE
@@ -347,7 +358,7 @@ export const caches: CacheStorage = {
             }
           },
         });
-        response.body?.pipeThrough(kvChunks);
+        response.body?.pipeThrough(splitStream).pipeThrough(accStream);
 
         // Orphaned chunks to remove after metadata change
         const newMeta: Metadata = {
@@ -364,7 +375,7 @@ export const caches: CacheStorage = {
           // Save each file chunk
           // Note that chunks expiration should be higher than metadata
           // to avoid reading a file with missing chunks
-          const reader = kvChunks.readable.getReader();
+          const reader = accStream.readable.getReader();
 
           for (; newMeta.body && true; newMeta.body.chunks++) {
             const { value, done } = await reader.read();
