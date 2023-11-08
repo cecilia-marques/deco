@@ -325,7 +325,7 @@ export const caches: CacheStorage = {
 
         // Transform 8Kb stream into 64Kb KV stream
         let accumulator = new Uint8Array();
-        const KV_CHUNK_SIZE = 64512; // 63Kb
+        const KV_CHUNK_SIZE = 61440; // 60Kb
         const kvChunks = new TransformStream({
           transform(chunk, controller) {
             if (
@@ -399,7 +399,8 @@ export const caches: CacheStorage = {
           if (!res.ok) {
             throw new Error("Could not set our metadata");
           }
-        } catch {
+        } catch (error) {
+          console.error(error);
           orphaned = newMeta;
         }
 
