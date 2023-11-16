@@ -88,13 +88,7 @@ export const caches: CacheStorage = {
   open: async (cacheName: string): Promise<Cache> => {
     await zstd.init();
 
-    const kv = await Deno.openKv();
-
-    for await (
-      const entry of kv.list({ prefix: [NAMESPACE] })
-    ) {
-      await kv.delete(entry.key);
-    }
+    const kv = await Deno.openKv()
 
     const keyForMetadata = (sha?: string) => {
       const key = [NAMESPACE, cacheName, "metas"];
