@@ -68,6 +68,7 @@ const LARGE_EXPIRE_MS = 1_000 * 3600 * 24; // 1day
 
 /** KV has a max of 64Kb per chunk */
 const MAX_CHUNK_SIZE = 64512;
+const MAX_CHUNKS_BATCH_SIZE = 10;
 
 export const caches: CacheStorage = {
   delete: async (cacheName: string): Promise<boolean> => {
@@ -216,26 +217,35 @@ export const caches: CacheStorage = {
           return new Response(null, metadata);
         }
 
-        const keys = new Array(body.chunks);
-        for (let it = 0; it < body.chunks; it++) {
-          keys[it] = keyForBodyChunk(body.etag, it);
+        const many: Promise<Deno.KvEntryMaybe<Uint8Array>[]>[] = [];
+        for (let i = 0; i < body.chunks; i += MAX_CHUNKS_BATCH_SIZE) {
+          const batch = [];
+          for (let j = 0; j < MAX_CHUNKS_BATCH_SIZE; j++) {
+            batch.push(keyForBodyChunk(body.etag, i + j));
+          }
+
+          many.push(
+            kv.getMany<Uint8Array[]>(batch, { consistency: "eventual" }),
+          );
         }
 
-        const chunks = await kv.getMany<Uint8Array[]>(keys, {
-          consistency: "eventual",
-        });
+        let length = 0;
+        for (const chunks of many) {
+          for (const chunk of await chunks) {
+            length += chunk.value?.length ?? 0;
+          }
+        }
 
-        const result = new Uint8Array(chunks.reduce(
-          (acc, curr) => (curr.value?.length ?? 0) + acc,
-          0,
-        ));
+        const result = new Uint8Array(length);
 
         let bytes = 0;
-        for (const { value: chunk } of chunks) {
-          if (!chunk) continue;
+        for (const chunks of many) {
+          for (const chunk of await chunks) {
+            if (!chunk.value) continue;
 
-          result.set(chunk, bytes);
-          bytes += chunk.length ?? 0;
+            result.set(chunk.value, bytes);
+            bytes += chunk.value.length ?? 0;
+          }
         }
 
         const decompressed = zstd.decompress(result);
@@ -261,13 +271,13 @@ export const caches: CacheStorage = {
         const metaKey = await keyForRequest(req);
         const oldMeta = await kv.get<Metadata>(metaKey);
 
-        const compressed = await response.arrayBuffer().then((buffer) =>
-          zstd.compress(new Uint8Array(buffer), 4)
-        );
+        const buffer = await response.arrayBuffer()
+          .then((buffer) => new Uint8Array(buffer))
+          .then((buffer) => zstd.compress(buffer, 4));
 
         // Orphaned chunks to remove after metadata change
         let orphaned = oldMeta.value;
-        const chunks = Math.ceil(compressed.length / MAX_CHUNK_SIZE);
+        const chunks = Math.ceil(buffer.length / MAX_CHUNK_SIZE);
         const newMeta: Metadata = {
           status: response.status,
           headers: [...response.headers.entries()],
@@ -281,7 +291,7 @@ export const caches: CacheStorage = {
           for (let it = 0; it < chunks; it++) {
             const res = await kv.set(
               keyForBodyChunk(newMeta.body.etag, it),
-              compressed.slice(
+              buffer.slice(
                 it * MAX_CHUNK_SIZE,
                 (it + 1) * MAX_CHUNK_SIZE,
               ),
