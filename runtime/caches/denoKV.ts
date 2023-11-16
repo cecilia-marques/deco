@@ -235,8 +235,11 @@ export const caches: CacheStorage = {
           result.set(chunk, bytes);
           bytes += chunk.length ?? 0;
         }
+        const start = performance.now();
+        const decompressed = zstd.decompress(result);
+        console.log("decompress", performance.now() - start, "ms");
 
-        return new Response(zstd.decompress(result), metadata);
+        return new Response(decompressed, metadata);
       },
       /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Cache/matchAll) */
       matchAll: (
@@ -257,9 +260,14 @@ export const caches: CacheStorage = {
         const metaKey = await keyForRequest(req);
         const oldMeta = await kv.get<Metadata>(metaKey);
 
-        const compressed = await response.arrayBuffer().then((buffer) =>
-          zstd.compress(new Uint8Array(buffer), 4)
-        );
+        const compressed = await response.arrayBuffer().then((buffer) => {
+          const start = performance.now();
+          const compress = zstd.compress(new Uint8Array(buffer), 4);
+
+          console.log("compress", performance.now() - start, "ms");
+
+          return compress;
+        });
 
         // Orphaned chunks to remove after metadata change
         let orphaned = oldMeta.value;
