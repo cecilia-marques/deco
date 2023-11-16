@@ -62,7 +62,7 @@ interface Metadata {
   headers: [string, string][];
 }
 
-const NAMESPACE = "CACHES";
+const NAMESPACE = "CACHES-no-zstd";
 const SMALL_EXPIRE_MS = 1_000 * 10; // 10seconds
 const LARGE_EXPIRE_MS = 1_000 * 3600 * 24; // 1day
 
@@ -248,9 +248,9 @@ export const caches: CacheStorage = {
           }
         }
 
-        const decompressed = zstd.decompress(result);
+        // const decompressed = zstd.decompress(result);
 
-        return new Response(decompressed, metadata);
+        return new Response(result, metadata);
       },
       /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Cache/matchAll) */
       matchAll: (
@@ -273,7 +273,7 @@ export const caches: CacheStorage = {
 
         const buffer = await response.arrayBuffer()
           .then((buffer) => new Uint8Array(buffer))
-          .then((buffer) => zstd.compress(buffer, 4));
+          // .then((buffer) => zstd.compress(buffer, 4));
 
         // Orphaned chunks to remove after metadata change
         let orphaned = oldMeta.value;
