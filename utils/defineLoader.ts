@@ -1,4 +1,4 @@
-import { caches } from "../runtime/caches/denoKV.ts";
+import { caches, timings } from "../runtime/caches/denoKV.ts";
 
 let cache: Cache | undefined | Promise<Cache>;
 const getCache = () => {
@@ -45,11 +45,19 @@ async (
     ),
   );
 
+  let end = timings("await getCache();");
   const cache = await getCache();
+  end();
+  end = timings("cache.match(request);");
   const matched = await cache.match(request);
+  end();
 
   if (matched) {
-    return matched.json();
+    end = timings("matched.json();");
+    const json = await matched.json();
+    end();
+
+    return json
   }
 
   const promise = handler(props, requestProps, ctx).then((json) => {
@@ -60,6 +68,6 @@ async (
     return json;
   });
 
-  return promise
+  return promise;
   // return matched ? matched.json() : promise;
 };

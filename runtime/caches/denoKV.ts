@@ -45,6 +45,14 @@ import {
   requestURLSHA1,
 } from "./common.ts";
 
+export const timings = (label: string) => {
+  const start = performance.now();
+
+  return () => {
+    console.log(label, performance.now() - start, "ms");
+  };
+};
+
 interface Metadata {
   body: {
     etag: string; // body version
@@ -88,7 +96,7 @@ export const caches: CacheStorage = {
   open: async (cacheName: string): Promise<Cache> => {
     await zstd.init();
 
-    const kv = await Deno.openKv()
+    const kv = await Deno.openKv();
 
     const keyForMetadata = (sha?: string) => {
       const key = [NAMESPACE, cacheName, "metas"];
@@ -194,11 +202,15 @@ export const caches: CacheStorage = {
       ): Promise<Response | undefined> => {
         assertNoOptions(options);
 
+        let end = timings('read keyForRequest')
         const key = await keyForRequest(request);
+        end()
 
+        end = timings('kv.get<Metadata>(key, {')
         const { value: metadata } = await kv.get<Metadata>(key, {
           consistency: "eventual",
         });
+        end()
 
         if (!metadata) return;
 
@@ -213,9 +225,11 @@ export const caches: CacheStorage = {
           keys[it] = keyForBodyChunk(body.etag, it);
         }
 
+        end = timings('kv.getMany<Uint8Array[]>(keys, {')
         const chunks = await kv.getMany<Uint8Array[]>(keys, {
           consistency: "eventual",
         });
+        end()
 
         const result = new Uint8Array(chunks.reduce(
           (acc, curr) => (curr.value?.length ?? 0) + acc,
@@ -230,10 +244,9 @@ export const caches: CacheStorage = {
           bytes += chunk.length ?? 0;
         }
 
-        console.log("starting decompression");
-        const start = performance.now();
+        end = timings("decompress");
         const decompressed = zstd.decompress(result);
-        console.log("decompress", performance.now() - start, "ms");
+        end();
 
         return new Response(decompressed, metadata);
       },
@@ -256,12 +269,10 @@ export const caches: CacheStorage = {
         const metaKey = await keyForRequest(req);
         const oldMeta = await kv.get<Metadata>(metaKey);
 
-        console.log("starting COMPRESSSION");
         const compressed = await response.arrayBuffer().then((buffer) => {
-          const start = performance.now();
+          const end = timings("compression");
           const compress = zstd.compress(new Uint8Array(buffer), 4);
-
-          console.log("compress", performance.now() - start, "ms");
+          end();
 
           return compress;
         });
