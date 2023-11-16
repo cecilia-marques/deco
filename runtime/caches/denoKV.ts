@@ -202,15 +202,11 @@ export const caches: CacheStorage = {
       ): Promise<Response | undefined> => {
         assertNoOptions(options);
 
-        let end = timings('read keyForRequest')
         const key = await keyForRequest(request);
-        end()
 
-        end = timings('kv.get<Metadata>(key, {')
         const { value: metadata } = await kv.get<Metadata>(key, {
           consistency: "eventual",
         });
-        end()
 
         if (!metadata) return;
 
@@ -225,11 +221,9 @@ export const caches: CacheStorage = {
           keys[it] = keyForBodyChunk(body.etag, it);
         }
 
-        end = timings('kv.getMany<Uint8Array[]>(keys, {')
         const chunks = await kv.getMany<Uint8Array[]>(keys, {
           consistency: "eventual",
         });
-        end()
 
         const result = new Uint8Array(chunks.reduce(
           (acc, curr) => (curr.value?.length ?? 0) + acc,
@@ -244,9 +238,7 @@ export const caches: CacheStorage = {
           bytes += chunk.length ?? 0;
         }
 
-        end = timings("decompress");
         const decompressed = zstd.decompress(result);
-        end();
 
         return new Response(decompressed, metadata);
       },
@@ -269,13 +261,9 @@ export const caches: CacheStorage = {
         const metaKey = await keyForRequest(req);
         const oldMeta = await kv.get<Metadata>(metaKey);
 
-        const compressed = await response.arrayBuffer().then((buffer) => {
-          const end = timings("compression");
-          const compress = zstd.compress(new Uint8Array(buffer), 4);
-          end();
-
-          return compress;
-        });
+        const compressed = await response.arrayBuffer().then((buffer) =>
+          zstd.compress(new Uint8Array(buffer), 4)
+        );
 
         // Orphaned chunks to remove after metadata change
         let orphaned = oldMeta.value;

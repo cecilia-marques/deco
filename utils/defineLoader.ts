@@ -45,19 +45,13 @@ async (
     ),
   );
 
-  let end = timings("await getCache();");
   const cache = await getCache();
-  end();
-  end = timings("cache.match(request);");
+  const end = timings("await cache.match(request);");
   const matched = await cache.match(request);
   end();
 
   if (matched) {
-    end = timings("matched.json();");
-    const json = await matched.json();
-    end();
-
-    return json
+    return matched.json();
   }
 
   const promise = handler(props, requestProps, ctx).then((json) => {
