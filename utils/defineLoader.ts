@@ -39,11 +39,18 @@ async (
   }
 
   const request = new Request(
-    new URL(`?key=${JSON.stringify({ props, requestProps })}`, "https://localhost"),
+    new URL(
+      `?key=${JSON.stringify({ props, requestProps })}`,
+      "https://localhost",
+    ),
   );
 
   const cache = await getCache();
   const matched = await cache.match(request);
+
+  if (matched) {
+    return matched.json();
+  }
 
   const promise = handler(props, requestProps, ctx).then((json) => {
     cache
@@ -53,5 +60,6 @@ async (
     return json;
   });
 
-  return matched ? matched.json() : promise;
+  return promise
+  // return matched ? matched.json() : promise;
 };
