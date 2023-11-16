@@ -235,6 +235,8 @@ export const caches: CacheStorage = {
           result.set(chunk, bytes);
           bytes += chunk.length ?? 0;
         }
+
+        console.log("starting decompression");
         const start = performance.now();
         const decompressed = zstd.decompress(result);
         console.log("decompress", performance.now() - start, "ms");
@@ -260,6 +262,7 @@ export const caches: CacheStorage = {
         const metaKey = await keyForRequest(req);
         const oldMeta = await kv.get<Metadata>(metaKey);
 
+        console.log("starting COMPRESSSION");
         const compressed = await response.arrayBuffer().then((buffer) => {
           const start = performance.now();
           const compress = zstd.compress(new Uint8Array(buffer), 4);
