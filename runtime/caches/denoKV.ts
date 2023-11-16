@@ -38,6 +38,7 @@
  *    if (res.ok) expire oldMeta chunks
  *    else expire newMeta chunks
  */
+import * as zstd from "https://deno.land/x/zstd_wasm@0.0.20/deno/zstd.ts";
 import {
   assertCanBeCached,
   assertNoOptions,
@@ -45,19 +46,20 @@ import {
 } from "./common.ts";
 
 interface Metadata {
-  body?: {
+  body: {
     etag: string; // body version
     chunks: number; // number of chunks in body
-  } | null;
+  };
   status: number;
   headers: [string, string][];
 }
 
-type Chunk = Uint8Array;
-
 const NAMESPACE = "CACHES";
 const SMALL_EXPIRE_MS = 1_000 * 10; // 10seconds
 const LARGE_EXPIRE_MS = 1_000 * 3600 * 24; // 1day
+
+/** KV has a max of 64Kb per chunk */
+const MAX_CHUNK_SIZE = 64512;
 
 export const caches: CacheStorage = {
   delete: async (cacheName: string): Promise<boolean> => {
@@ -84,7 +86,15 @@ export const caches: CacheStorage = {
     throw new Error("Not Implemented");
   },
   open: async (cacheName: string): Promise<Cache> => {
+    await zstd.init();
+
     const kv = await Deno.openKv();
+
+    for await (
+      const entry of kv.list({ prefix: [NAMESPACE] })
+    ) {
+      await kv.delete(entry.key);
+    }
 
     const keyForMetadata = (sha?: string) => {
       const key = [NAMESPACE, cacheName, "metas"];
@@ -122,7 +132,7 @@ export const caches: CacheStorage = {
       for (let it = 0; it < chunks; it++) {
         const key = keyForBodyChunk(etag, it);
 
-        const chunk = await kv.get<Chunk>(key);
+        const chunk = await kv.get<Uint8Array>(key);
 
         if (!chunk.value) continue;
 
@@ -200,39 +210,33 @@ export const caches: CacheStorage = {
 
         const { body } = metadata;
 
-        // Stream body from KV
-        let iterator = 0;
-        const MAX_KV_BATCH_SIZE = 10;
-        const stream = body
-          ? new ReadableStream({
-            async pull(controller) {
-              try {
-                const len = Math.min(MAX_KV_BATCH_SIZE, body.chunks - iterator);
+        if (body.chunks === 0) {
+          return new Response(null, metadata);
+        }
 
-                if (len <= 0) return controller.close();
+        const keys = new Array(body.chunks);
+        for (let it = 0; it < body.chunks; it++) {
+          keys[it] = keyForBodyChunk(body.etag, it);
+        }
 
-                const keys = new Array(len);
-                for (let it = 0; it < len; it++) {
-                  keys[it] = keyForBodyChunk(body.etag, it + iterator);
-                }
+        const chunks = await kv.getMany<Uint8Array[]>(keys, {
+          consistency: "eventual",
+        });
 
-                const chunks = await kv.getMany<Chunk[]>(keys, {
-                  consistency: "eventual",
-                });
+        const result = new Uint8Array(chunks.reduce(
+          (acc, curr) => (curr.value?.length ?? 0) + acc,
+          0,
+        ));
 
-                for (const { value } of chunks) {
-                  controller.enqueue(value);
-                }
+        let bytes = 0;
+        for (const { value: chunk } of chunks) {
+          if (!chunk) continue;
 
-                iterator += len;
-              } catch (error) {
-                controller.error(error);
-              }
-            },
-          })
-          : null;
+          result.set(chunk, bytes);
+          bytes += chunk.length ?? 0;
+        }
 
-        return new Response(stream, metadata);
+        return new Response(zstd.decompress(result), metadata);
       },
       /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Cache/matchAll) */
       matchAll: (
@@ -253,68 +257,32 @@ export const caches: CacheStorage = {
         const metaKey = await keyForRequest(req);
         const oldMeta = await kv.get<Metadata>(metaKey);
 
-        // Transform any stream into 64Kb KV stream
-        const MAX_CHUNK_SIZE = 64512; // 64Kb
-        const deflator = new TransformStream({
-          transform(chunk, controller) {
-            for (let it = 0; it < chunk.byteLength; it += MAX_CHUNK_SIZE) {
-              controller.enqueue(chunk.slice(it, it + MAX_CHUNK_SIZE));
-            }
-          },
-        });
-        let accumulator = new Uint8Array();
-        const inflator = new TransformStream({
-          transform(chunk, controller) {
-            if (
-              accumulator.byteLength + chunk.byteLength > MAX_CHUNK_SIZE
-            ) {
-              controller.enqueue(accumulator);
-              accumulator = new Uint8Array(chunk);
-            } else {
-              accumulator = new Uint8Array([
-                ...accumulator,
-                ...chunk,
-              ]);
-            }
-          },
-          flush(controller) {
-            if (accumulator.byteLength > 0) {
-              controller.enqueue(accumulator);
-            }
-          },
-        });
-
-        response.body?.pipeThrough(deflator).pipeThrough(inflator);
+        const compressed = await response.arrayBuffer().then((buffer) =>
+          zstd.compress(new Uint8Array(buffer), 4)
+        );
 
         // Orphaned chunks to remove after metadata change
         let orphaned = oldMeta.value;
+        const chunks = Math.ceil(compressed.length / MAX_CHUNK_SIZE);
         const newMeta: Metadata = {
           status: response.status,
           headers: [...response.headers.entries()],
-          body: response.body && {
-            etag: crypto.randomUUID(),
-            chunks: 0,
-          },
+          body: { etag: crypto.randomUUID(), chunks },
         };
 
         try {
           // Save each file chunk
           // Note that chunks expiration should be higher than metadata
           // to avoid reading a file with missing chunks
-          const reader = inflator.readable.getReader();
-
-          for (; newMeta.body && true; newMeta.body.chunks++) {
-            const { value, done } = await reader.read();
-
-            if (done) break;
-
-            const chunkKey = keyForBodyChunk(
-              newMeta.body.etag,
-              newMeta.body.chunks,
+          for (let it = 0; it < chunks; it++) {
+            const res = await kv.set(
+              keyForBodyChunk(newMeta.body.etag, it),
+              compressed.slice(
+                it * MAX_CHUNK_SIZE,
+                (it + 1) * MAX_CHUNK_SIZE,
+              ),
+              { expireIn: LARGE_EXPIRE_MS + SMALL_EXPIRE_MS },
             );
-            const res = await kv.set(chunkKey, value, {
-              expireIn: LARGE_EXPIRE_MS + SMALL_EXPIRE_MS,
-            });
 
             if (!res.ok) {
               throw new Error("Error while saving chunk to KV");
