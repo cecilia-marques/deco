@@ -38,37 +38,35 @@
  *    if (res.ok) expire oldMeta chunks
  *    else expire newMeta chunks
  */
-import * as zstd from "https://deno.land/x/zstd_wasm@0.0.20/deno/zstd.ts";
+import {
+  compress,
+  decompress,
+  init as initZstd,
+} from "https://deno.land/x/zstd_wasm@0.0.20/deno/zstd.ts";
 import {
   assertCanBeCached,
   assertNoOptions,
   requestURLSHA1,
 } from "./common.ts";
 
-export const timings = (label: string) => {
-  const start = performance.now();
-
-  return () => {
-    console.log(label, performance.now() - start, "ms");
-  };
-};
-
 interface Metadata {
   body: {
     etag: string; // body version
     chunks: number; // number of chunks in body
+    zstd: boolean;
   };
   status: number;
   headers: [string, string][];
 }
 
-const NAMESPACE = "CACHES-no-zstd";
+const NAMESPACE = "CACHES-blah";
 const SMALL_EXPIRE_MS = 1_000 * 10; // 10seconds
 const LARGE_EXPIRE_MS = 1_000 * 3600 * 24; // 1day
 
 /** KV has a max of 64Kb per chunk */
 const MAX_CHUNK_SIZE = 64512;
 const MAX_CHUNKS_BATCH_SIZE = 10;
+const MAX_UNCOMPRESSED_SIZE = MAX_CHUNK_SIZE * MAX_CHUNKS_BATCH_SIZE;
 
 export const caches: CacheStorage = {
   delete: async (cacheName: string): Promise<boolean> => {
@@ -95,7 +93,7 @@ export const caches: CacheStorage = {
     throw new Error("Not Implemented");
   },
   open: async (cacheName: string): Promise<Cache> => {
-    await zstd.init();
+    await initZstd();
 
     const kv = await Deno.openKv();
 
@@ -248,9 +246,10 @@ export const caches: CacheStorage = {
           }
         }
 
-        // const decompressed = zstd.decompress(result);
-
-        return new Response(result, metadata);
+        return new Response(
+          body.zstd ? decompress(result) : result,
+          metadata,
+        );
       },
       /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Cache/matchAll) */
       matchAll: (
@@ -271,9 +270,13 @@ export const caches: CacheStorage = {
         const metaKey = await keyForRequest(req);
         const oldMeta = await kv.get<Metadata>(metaKey);
 
-        const buffer = await response.arrayBuffer()
+        const [buffer, zstd] = await response.arrayBuffer()
           .then((buffer) => new Uint8Array(buffer))
-          // .then((buffer) => zstd.compress(buffer, 4));
+          .then((buffer) =>
+            buffer.length > MAX_UNCOMPRESSED_SIZE
+              ? [compress(buffer, 4), true] as const
+              : [buffer, false] as const
+          );
 
         // Orphaned chunks to remove after metadata change
         let orphaned = oldMeta.value;
@@ -281,7 +284,7 @@ export const caches: CacheStorage = {
         const newMeta: Metadata = {
           status: response.status,
           headers: [...response.headers.entries()],
-          body: { etag: crypto.randomUUID(), chunks },
+          body: { etag: crypto.randomUUID(), chunks, zstd },
         };
 
         try {

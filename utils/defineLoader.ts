@@ -1,4 +1,4 @@
-import { caches, timings } from "../runtime/caches/denoKV.ts";
+import { caches } from "../runtime/caches/denoKV.ts";
 
 let cache: Cache | undefined | Promise<Cache>;
 const getCache = () => {
@@ -46,9 +46,7 @@ async (
   );
 
   const cache = await getCache();
-  const end = timings("await cache.match(request);");
   const matched = await cache.match(request);
-  end();
 
   if (matched) {
     return matched.json();
