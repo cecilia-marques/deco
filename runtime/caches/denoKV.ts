@@ -207,9 +207,12 @@ export const caches: CacheStorage = {
 
         console.log({ key });
 
-        const { value: metadata } = await kv.get<Metadata>(key, {
+        const res = await kv.get<Metadata>(key, {
           consistency: "eventual",
         });
+        const { value: metadata } = res;
+
+        console.log(res);
 
         if (!metadata) return;
 
