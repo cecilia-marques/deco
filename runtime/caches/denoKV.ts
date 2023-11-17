@@ -59,7 +59,7 @@ interface Metadata {
   headers: [string, string][];
 }
 
-const NAMESPACE = "CACHES-blah";
+const NAMESPACE = "CACHES";
 const SMALL_EXPIRE_MS = 1_000 * 10; // 10seconds
 const LARGE_EXPIRE_MS = 1_000 * 3600 * 24; // 1day
 

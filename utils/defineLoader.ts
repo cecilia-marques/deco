@@ -8,7 +8,7 @@ let maybeCache: Promise<unknown> | Cache | undefined = withInstrumentation(
   .then((c) => maybeCache = c)
   .catch(() => maybeCache = undefined);
 
-const MAX_AGE_S = 10; // 30 * 60; // 30min in seconds
+const MAX_AGE_S = 30 * 60; // 30min in seconds
 
 interface LoaderDefinition<
   TContext,
