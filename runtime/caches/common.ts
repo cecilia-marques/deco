@@ -1,7 +1,8 @@
+import { logger } from "deco/runtime/fetch/fetchLog.ts";
 import { ValueType } from "../../deps.ts";
+import { tracer } from "../../observability/otel/config.ts";
 import { meter } from "../../observability/otel/metrics.ts";
 import { sha1 } from "../utils.ts";
-import { tracer } from "../../observability/otel/config.ts";
 
 export const assertNoOptions = (
   { ignoreMethod, ignoreSearch, ignoreVary }: CacheQueryOptions = {},
@@ -75,6 +76,9 @@ export const withInstrumentation = (
               result,
               engine,
             });
+
+            logger?.(`${engine}: cache-${result}`);
+
             return isMatch;
           } catch (err) {
             span.recordException(err);

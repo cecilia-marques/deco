@@ -1,6 +1,6 @@
 import { formatOutgoingFetch } from "../../utils/log.ts";
 
-let logger: null | ((_: string) => void) = null;
+export let logger: null | ((_: string) => void) = null;
 
 export const setLogger = (loggerLike: typeof logger) => logger = loggerLike;
 
