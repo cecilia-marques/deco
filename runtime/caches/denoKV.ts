@@ -291,8 +291,6 @@ export const caches: CacheStorage = {
           body: { etag: crypto.randomUUID(), chunks, zstd },
         };
 
-        console.log({ newMeta, oldMeta });
-
         try {
           // Save each file chunk
           // Note that chunks expiration should be higher than metadata
@@ -307,6 +305,8 @@ export const caches: CacheStorage = {
               { expireIn: LARGE_EXPIRE_MS + SMALL_EXPIRE_MS },
             );
 
+            console.log({ res });
+
             if (!res.ok) {
               throw new Error("Error while saving chunk to KV");
             }
@@ -317,7 +317,7 @@ export const caches: CacheStorage = {
             expireIn: LARGE_EXPIRE_MS,
           });
 
-          console.log({ metaKey });
+          console.log({ res });
 
           if (!res.ok) {
             throw new Error("Could not set our metadata");
