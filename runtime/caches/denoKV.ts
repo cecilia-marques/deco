@@ -68,6 +68,8 @@ const MAX_CHUNK_SIZE = 64512;
 const MAX_CHUNKS_BATCH_SIZE = 10;
 const MAX_UNCOMPRESSED_SIZE = MAX_CHUNK_SIZE * MAX_CHUNKS_BATCH_SIZE;
 
+const zstdPromise = initZstd();
+
 export const caches: CacheStorage = {
   delete: async (cacheName: string): Promise<boolean> => {
     const kv = await Deno.openKv();
@@ -93,7 +95,7 @@ export const caches: CacheStorage = {
     throw new Error("Not Implemented");
   },
   open: async (cacheName: string): Promise<Cache> => {
-    await initZstd();
+    await zstdPromise;
 
     const kv = await Deno.openKv();
 

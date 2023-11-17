@@ -1,11 +1,10 @@
 import { caches } from "../runtime/caches/denoKV.ts";
 
-let cache: Cache | undefined | Promise<Cache>;
-const getCache = () => {
-  cache ||= caches.open("loader");
+let maybeCache: Promise<unknown> | Cache | undefined = caches.open("loader")
+  .then((c) => maybeCache = c)
+  .catch(() => maybeCache = undefined);
 
-  return cache;
-};
+const MAX_AGE_S = 10; // 30 * 60; // 30min in seconds
 
 interface LoaderDefinition<
   TContext,
@@ -22,6 +21,16 @@ interface LoaderDefinition<
   ) => Promise<TReturn>;
 }
 
+const isCache = (c: any): c is Cache => typeof c?.put === "function";
+
+const inFuture = (maybeDate: string) => {
+  try {
+    return new Date(maybeDate) > new Date();
+  } catch {
+    return false;
+  }
+};
+
 export const defineLoader = <TContext, TProps, TReturn, PRequest>({
   propsFromRequest,
   handler,
@@ -33,33 +42,49 @@ async (
   ctx: Parameters<typeof handler>[2],
 ): Promise<ReturnType<typeof handler>> => {
   const requestProps = propsFromRequest(req);
+  const skipCache = mode === "no-store" || !isCache(maybeCache);
 
-  if (mode === "no-store") {
+  if (skipCache) {
     return handler(props, requestProps, ctx);
   }
 
+  // Somehow typescript does not understand maybeCache is Cache
+  const cache = maybeCache as Cache;
+
   const request = new Request(
     new URL(
-      `?key=${JSON.stringify({ props, requestProps })}`,
+      `?props=${JSON.stringify(props)}&request=${JSON.stringify(requestProps)}`,
       "https://localhost",
     ),
   );
 
-  const cache = await getCache();
-  const matched = await cache.match(request);
+  const callHandlerAndCache = async () => {
+    const json = await handler(props, requestProps, ctx);
 
-  if (matched) {
-    return matched.json();
-  }
-
-  const promise = handler(props, requestProps, ctx).then((json) => {
-    cache
-      .put(request, new Response(JSON.stringify(json)))
-      .catch(console.error);
+    cache.put(
+      request,
+      new Response(JSON.stringify(json), {
+        headers: {
+          "expires": new Date(Date.now() + (MAX_AGE_S * 1e3)).toUTCString(),
+        },
+      }),
+    ).catch(console.error);
 
     return json;
-  });
+  };
 
-  return promise;
-  // return matched ? matched.json() : promise;
+  const matched = await cache.match(request).catch(() => null);
+
+  if (!matched) {
+    return callHandlerAndCache();
+  }
+
+  const expires = matched.headers.get("expires");
+  const isStale = expires ? !inFuture(expires) : false;
+
+  if (isStale) {
+    callHandlerAndCache().catch(console.error);
+  }
+
+  return matched.json();
 };
