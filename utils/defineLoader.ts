@@ -1,6 +1,10 @@
 import { caches } from "../runtime/caches/denoKV.ts";
+import { withInstrumentation } from "../runtime/caches/common.ts";
 
-let maybeCache: Promise<unknown> | Cache | undefined = caches.open("loader")
+let maybeCache: Promise<unknown> | Cache | undefined = withInstrumentation(
+  caches,
+  "kv",
+).open("loader")
   .then((c) => maybeCache = c)
   .catch(() => maybeCache = undefined);
 
