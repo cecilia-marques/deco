@@ -205,6 +205,8 @@ export const caches: CacheStorage = {
 
         const key = await keyForRequest(request);
 
+        console.log({ key });
+
         const { value: metadata } = await kv.get<Metadata>(key, {
           consistency: "eventual",
         });
@@ -289,6 +291,8 @@ export const caches: CacheStorage = {
           body: { etag: crypto.randomUUID(), chunks, zstd },
         };
 
+        console.log({ newMeta, oldMeta });
+
         try {
           // Save each file chunk
           // Note that chunks expiration should be higher than metadata
@@ -312,6 +316,8 @@ export const caches: CacheStorage = {
           const res = await kv.set(metaKey, newMeta, {
             expireIn: LARGE_EXPIRE_MS,
           });
+
+          console.log({ metaKey });
 
           if (!res.ok) {
             throw new Error("Could not set our metadata");

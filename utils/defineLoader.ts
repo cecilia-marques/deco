@@ -1,10 +1,20 @@
 import { caches } from "../runtime/caches/denoKV.ts";
-import { withInstrumentation } from "../runtime/caches/common.ts";
+import { tracer } from "../observability/otel/config.ts";
+import { meter } from "../observability/otel/metrics.ts";
+import { ValueType } from "../deps.ts";
 
-let maybeCache: Promise<unknown> | Cache | undefined = withInstrumentation(
-  caches,
-  "kv",
-).open("loader")
+const int = {
+  unit: "1",
+  valueType: ValueType.INT,
+};
+const stats = {
+  hit: meter.createCounter("loader_cache_hit", int),
+  miss: meter.createCounter("loader_cache_miss", int),
+  stale: meter.createCounter("loader_cache_stale", int),
+  bypass: meter.createCounter("loader_cache_bypass", int),
+};
+
+let maybeCache: Promise<unknown> | Cache | undefined = caches.open("loader")
   .then((c) => maybeCache = c)
   .catch(() => maybeCache = undefined);
 
@@ -48,47 +58,70 @@ async (
   const requestProps = propsFromRequest(req);
   const skipCache = mode === "no-store" || !isCache(maybeCache);
 
-  if (skipCache) {
-    return handler(props, requestProps, ctx);
+  const span = tracer.startSpan("run-loader", { attributes: { mode } });
+  let status;
+
+  try {
+    if (skipCache) {
+      status = "bypass";
+      stats.bypass.add(1);
+
+      return await handler(props, requestProps, ctx);
+    }
+
+    // Somehow typescript does not understand maybeCache is Cache
+    const cache = maybeCache as Cache;
+
+    const request = new Request(
+      new URL(
+        `?props=${JSON.stringify(props)}&request=${
+          JSON.stringify(requestProps)
+        }`,
+        "https://localhost",
+      ),
+    );
+
+    const callHandlerAndCache = async () => {
+      const json = await handler(props, requestProps, ctx);
+
+      cache.put(
+        request,
+        new Response(JSON.stringify(json), {
+          headers: {
+            "expires": new Date(Date.now() + (MAX_AGE_S * 1e3)).toUTCString(),
+          },
+        }),
+      ).catch(console.error);
+
+      return json;
+    };
+
+    const matched = await cache.match(request).catch(() => null);
+
+    if (!matched) {
+      status = "miss";
+      stats.miss.add(1);
+
+      return await callHandlerAndCache();
+    }
+
+    const expires = matched.headers.get("expires");
+    const isStale = expires ? !inFuture(expires) : false;
+
+    if (isStale) {
+      status = "stale";
+      stats.stale.add(1);
+
+      callHandlerAndCache().catch((error) => console.error(error));
+    } else {
+      status = "hit";
+      stats.hit.add(1);
+    }
+
+    return await matched.json();
+  } finally {
+    console.log({ status });
+    span.addEvent("cache", { status });
+    span.end();
   }
-
-  // Somehow typescript does not understand maybeCache is Cache
-  const cache = maybeCache as Cache;
-
-  const request = new Request(
-    new URL(
-      `?props=${JSON.stringify(props)}&request=${JSON.stringify(requestProps)}`,
-      "https://localhost",
-    ),
-  );
-
-  const callHandlerAndCache = async () => {
-    const json = await handler(props, requestProps, ctx);
-
-    cache.put(
-      request,
-      new Response(JSON.stringify(json), {
-        headers: {
-          "expires": new Date(Date.now() + (MAX_AGE_S * 1e3)).toUTCString(),
-        },
-      }),
-    ).catch(console.error);
-
-    return json;
-  };
-
-  const matched = await cache.match(request).catch(() => null);
-
-  if (!matched) {
-    return callHandlerAndCache();
-  }
-
-  const expires = matched.headers.get("expires");
-  const isStale = expires ? !inFuture(expires) : false;
-
-  if (isStale) {
-    callHandlerAndCache().catch(console.error);
-  }
-
-  return matched.json();
 };
