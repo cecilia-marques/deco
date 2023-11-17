@@ -59,6 +59,8 @@ interface Metadata {
   headers: [string, string][];
 }
 
+const KV_SOURCE = undefined;
+
 const NAMESPACE = "CACHES";
 const SMALL_EXPIRE_MS = 1_000 * 10; // 10seconds
 const LARGE_EXPIRE_MS = 1_000 * 3600 * 24; // 1day
@@ -72,7 +74,7 @@ const zstdPromise = initZstd();
 
 export const caches: CacheStorage = {
   delete: async (cacheName: string): Promise<boolean> => {
-    const kv = await Deno.openKv();
+    const kv = await Deno.openKv(KV_SOURCE);
 
     for await (
       const entry of kv.list({ prefix: [NAMESPACE, cacheName] })
@@ -97,7 +99,7 @@ export const caches: CacheStorage = {
   open: async (cacheName: string): Promise<Cache> => {
     await zstdPromise;
 
-    const kv = await Deno.openKv();
+    const kv = await Deno.openKv(KV_SOURCE);
 
     const keyForMetadata = (sha?: string) => {
       const key = [NAMESPACE, cacheName, "metas"];
@@ -205,14 +207,10 @@ export const caches: CacheStorage = {
 
         const key = await keyForRequest(request);
 
-        console.log({ key });
-
         const res = await kv.get<Metadata>(key, {
           consistency: "eventual",
         });
         const { value: metadata } = res;
-
-        console.log(res);
 
         if (!metadata) return;
 
@@ -308,8 +306,6 @@ export const caches: CacheStorage = {
               { expireIn: LARGE_EXPIRE_MS + SMALL_EXPIRE_MS },
             );
 
-            console.log({ res });
-
             if (!res.ok) {
               throw new Error("Error while saving chunk to KV");
             }
@@ -319,8 +315,6 @@ export const caches: CacheStorage = {
           const res = await kv.set(metaKey, newMeta, {
             expireIn: LARGE_EXPIRE_MS,
           });
-
-          console.log({ res });
 
           if (!res.ok) {
             throw new Error("Could not set our metadata");
