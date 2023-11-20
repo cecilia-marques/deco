@@ -59,6 +59,7 @@ interface Metadata {
   headers: [string, string][];
 }
 
+// Change here for testing a Deno Deploy based KV hosting
 const KV_SOURCE = undefined;
 
 const NAMESPACE = "CACHES";

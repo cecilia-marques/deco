@@ -1,7 +1,11 @@
-import { caches } from "../runtime/caches/denoKV.ts";
+import { gray, green, red, yellow } from "std/fmt/colors.ts";
+import { ValueType } from "../deps.ts";
 import { tracer } from "../observability/otel/config.ts";
 import { meter } from "../observability/otel/metrics.ts";
-import { ValueType } from "../deps.ts";
+import { caches } from "../runtime/caches/denoKV.ts";
+import { logger } from "../runtime/fetch/fetchLog.ts";
+
+const DISABLE_LOADER_CACHE = "DISABLE_LOADER_CACHE";
 
 const int = {
   unit: "1",
@@ -20,20 +24,20 @@ let maybeCache: Promise<unknown> | Cache | undefined = caches.open("loader")
 
 const MAX_AGE_S = 30 * 60; // 30min in seconds
 
-interface LoaderDefinition<
+type LoaderDefinition<
   TContext,
   TProps,
   TReturn,
   TRequest = void,
-> {
+> = {
   cache: "no-store" | "stale-while-revalidate";
-  propsFromRequest: (req: Request) => TRequest;
+  propsFromRequest?: (req: Request, ctx: TContext) => TRequest;
   handler: (
     sProps: TProps,
     rProps: TRequest,
     ctx: TContext,
   ) => Promise<TReturn>;
-}
+};
 
 const isCache = (c: any): c is Cache => typeof c?.put === "function";
 
@@ -55,23 +59,27 @@ async (
   req: Request,
   ctx: Parameters<typeof handler>[2],
 ): Promise<ReturnType<typeof handler>> => {
-  const requestProps = propsFromRequest(req);
-  const skipCache = mode === "no-store" || !isCache(maybeCache);
+  const start = logger && performance.now();
+  const requestProps = propsFromRequest?.(req, ctx);
+  const skipCache = mode === "no-store" ||
+    Deno.env.get(DISABLE_LOADER_CACHE) !== undefined ||
+    !isCache(maybeCache);
 
   const span = tracer.startSpan("run-loader", { attributes: { mode } });
-  let status;
+  let status: "bypass" | "miss" | "stale" | "hit" | undefined;
 
   try {
     if (skipCache) {
       status = "bypass";
       stats.bypass.add(1);
 
-      return await handler(props, requestProps, ctx);
+      return await handler(props, requestProps as PRequest & undefined, ctx);
     }
 
     // Somehow typescript does not understand maybeCache is Cache
     const cache = maybeCache as Cache;
 
+    // TODO: Resolve props cache key statically
     const request = new Request(
       new URL(
         `?props=${JSON.stringify(props)}&request=${
@@ -82,7 +90,11 @@ async (
     );
 
     const callHandlerAndCache = async () => {
-      const json = await handler(props, requestProps, ctx);
+      const json = await handler(
+        props,
+        requestProps as PRequest & undefined,
+        ctx,
+      );
 
       cache.put(
         request,
@@ -120,7 +132,26 @@ async (
 
     return await matched.json();
   } finally {
-    console.log({ status });
+    if (logger) {
+      const d = performance.now() - start!;
+
+      const durationColor = d < 300 ? green : d < 700 ? yellow : red;
+      const durationStr = d > 1e3
+        ? `${(d / 1e3).toFixed(2)}s`
+        : `${d.toFixed(0)}ms`;
+
+      logger(
+        ` -> ${status?.toUpperCase()} ${durationColor(durationStr)} ${
+          gray(
+            Deno.inspect(JSON.stringify(props), { colors: false }).slice(
+              0,
+              140,
+            ),
+          )
+        }`,
+      );
+    }
+
     span.addEvent("cache", { status });
     span.end();
   }
