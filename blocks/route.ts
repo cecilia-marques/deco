@@ -215,10 +215,12 @@ export const buildDecoState = <TManifest extends AppManifest = AppManifest>(
     };
 
     // Logs  ?__d is present in localhost
-    context.state.monitoring.logger.log(
-      formatIncomingRequest(request, liveContext.site),
-    );
-    setLogger(context.state.monitoring.logger.log);
+    if (enabled) {
+      context.state.monitoring.logger.log(
+        formatIncomingRequest(request, liveContext.site),
+      );
+      setLogger(context.state.monitoring.logger.log);
+    }
 
     const url = new URL(request.url);
     const isEchoRoute = url.pathname.startsWith("/live/_echo"); // echoing

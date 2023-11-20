@@ -10,7 +10,12 @@ import {
   ComponentFunc,
   PreactComponent,
 } from "../engine/block.ts";
-import { Monitoring, ResolveFunc, Resolver } from "../engine/core/resolver.ts";
+import {
+  FieldResolver,
+  Monitoring,
+  ResolveFunc,
+  Resolver,
+} from "../engine/core/resolver.ts";
 import { PromiseOrValue, singleFlight } from "../engine/core/utils.ts";
 import { ResolverMiddlewareContext } from "../engine/middleware.ts";
 import type { Manifest } from "../live.gen.ts";
@@ -82,6 +87,7 @@ export type FnContext<
   TState = {},
   TManifest extends AppManifest = Manifest,
 > = TState & RequestState & {
+  resolveChain: FieldResolver[];
   monitoring?: Monitoring;
   get: ResolveFunc;
   invoke:
@@ -110,6 +116,7 @@ export const fnContextFromHttpContext = <TState = {}>(
 ): FnContext<TState> => {
   return {
     ...ctx?.context?.state?.global,
+    resolveChain: ctx.resolveChain,
     monitoring: ctx.monitoring,
     get: ctx.resolve,
     response: ctx.context.state.response,
