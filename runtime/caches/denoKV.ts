@@ -59,9 +59,6 @@ interface Metadata {
   headers: [string, string][];
 }
 
-// Change here for testing a Deno Deploy based KV hosting
-const KV_SOURCE = undefined;
-
 const NAMESPACE = "CACHES";
 const SMALL_EXPIRE_MS = 1_000 * 10; // 10seconds
 const LARGE_EXPIRE_MS = 1_000 * 3600 * 24; // 1day
@@ -75,7 +72,7 @@ const zstdPromise = initZstd();
 
 export const caches: CacheStorage = {
   delete: async (cacheName: string): Promise<boolean> => {
-    const kv = await Deno.openKv(KV_SOURCE);
+    const kv = await Deno.openKv();
 
     for await (
       const entry of kv.list({ prefix: [NAMESPACE, cacheName] })
@@ -100,7 +97,7 @@ export const caches: CacheStorage = {
   open: async (cacheName: string): Promise<Cache> => {
     await zstdPromise;
 
-    const kv = await Deno.openKv(KV_SOURCE);
+    const kv = await Deno.openKv();
 
     const keyForMetadata = (sha?: string) => {
       const key = [NAMESPACE, cacheName, "metas"];
@@ -212,8 +209,6 @@ export const caches: CacheStorage = {
           consistency: "eventual",
         });
         const { value: metadata } = res;
-
-        console.log({ res, key });
 
         if (!metadata) return;
 
