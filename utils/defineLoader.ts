@@ -144,15 +144,12 @@ export const defineLoader =
         const s = status?.toUpperCase();
         const d = performance.now() - start!;
         const resolver = cyan(resolverFromChain(ctx.resolveChain));
-        const p = Deno.inspect(JSON.stringify(props), { colors: false });
-        const propsStr = gray(p.length > 80 ? `${p.slice(0, 80)}...` : p);
+        const propsStr = gray(JSON.stringify({ props, requestProps }));
         const latency = (d < 300 ? green : d < 700 ? yellow : red)(
           d > 1e3 ? `${(d / 1e3).toFixed(2)}s` : `${d.toFixed(0)}ms`,
         );
 
-        logger(
-          ` -> ${s} ${latency} ${resolver} ${propsStr} `,
-        );
+        logger(` -> ${s} ${latency} ${resolver} ${propsStr}`);
       }
 
       span.addEvent("cache", { status });
