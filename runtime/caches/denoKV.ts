@@ -205,8 +205,6 @@ export const caches: CacheStorage = {
 
         const key = await keyForRequest(request);
 
-        console.log({ key });
-
         const res = await kv.get<Metadata>(key, {
           consistency: "eventual",
         });
@@ -274,8 +272,6 @@ export const caches: CacheStorage = {
 
         const metaKey = await keyForRequest(req);
         const oldMeta = await kv.get<Metadata>(metaKey);
-
-        console.log({ metaKey });
 
         const [buffer, zstd] = await response.arrayBuffer()
           .then((buffer) => new Uint8Array(buffer))
