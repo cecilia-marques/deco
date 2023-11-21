@@ -1,23 +1,22 @@
+import { FnContext } from "deco/blocks/utils.tsx";
 import { cyan, gray, green, red, yellow } from "std/fmt/colors.ts";
 import { ValueType } from "../deps.ts";
-import { tracer } from "../observability/otel/config.ts";
 import { meter } from "../observability/otel/metrics.ts";
 import { caches } from "../runtime/caches/denoKV.ts";
 import { logger } from "../runtime/fetch/fetchLog.ts";
-import { FnContext } from "deco/blocks/utils.tsx";
-import { FieldResolver } from "deco/engine/core/resolver.ts";
 
 const DISABLE_LOADER_CACHE = "DISABLE_LOADER_CACHE";
 
-const int = {
-  unit: "1",
-  valueType: ValueType.INT,
-};
 const stats = {
-  hit: meter.createCounter("loader_cache_hit", int),
-  miss: meter.createCounter("loader_cache_miss", int),
-  stale: meter.createCounter("loader_cache_stale", int),
-  bypass: meter.createCounter("loader_cache_bypass", int),
+  cache: meter.createCounter("loader_cache", {
+    unit: "1",
+    valueType: ValueType.INT,
+  }),
+  latency: meter.createHistogram("resolver_latency", {
+    description: "resolver latency",
+    unit: "ms",
+    valueType: ValueType.DOUBLE,
+  }),
 };
 
 let maybeCache: Promise<unknown> | Cache | undefined = caches.open("loader")
@@ -27,7 +26,7 @@ let maybeCache: Promise<unknown> | Cache | undefined = caches.open("loader")
 const MAX_AGE_S = 30 * 60; // 30min in seconds
 
 type LoaderDefinition<
-  TContext extends FnContext,
+  TContext,
   TProps,
   TReturn,
   TRequest = void,
@@ -51,13 +50,8 @@ const inFuture = (maybeDate: string) => {
   }
 };
 
-const resolverFromChain = (chain: FieldResolver[]) =>
-  chain.at(-2)?.type === "resolvable"
-    ? chain.at(-2)?.value?.toString() ?? "unknown"
-    : chain.at(-1)?.value?.toString() ?? "unknown";
-
 export const defineLoader =
-  <TContext extends FnContext, TProps, TReturn, PRequest>({
+  <TContext extends FnContext<unknown, any>, TProps, TReturn, PRequest>({
     propsFromRequest,
     handler,
     cache: mode,
@@ -67,19 +61,20 @@ export const defineLoader =
     req: Request,
     ctx: TContext,
   ): Promise<ReturnType<typeof handler>> => {
-    const start = logger && performance.now();
+    const loader = ctx.resolverId;
+    const start = performance.now();
     const requestProps = propsFromRequest?.(req, ctx);
     const skipCache = mode === "no-store" ||
       Deno.env.get(DISABLE_LOADER_CACHE) !== undefined ||
       !isCache(maybeCache);
 
-    const span = tracer.startSpan("run-loader", { attributes: { mode } });
+    const end = ctx.monitoring?.timings.start(loader);
     let status: "bypass" | "miss" | "stale" | "hit" | undefined;
 
     try {
       if (skipCache) {
         status = "bypass";
-        stats.bypass.add(1);
+        stats.cache.add(1, { status, loader });
 
         return await handler(props, requestProps as PRequest & undefined, ctx);
       }
@@ -88,14 +83,10 @@ export const defineLoader =
       const cache = maybeCache as Cache;
 
       // TODO: Resolve props cache key statically
-      const request = new Request(
-        new URL(
-          `?props=${JSON.stringify(props)}&request=${
-            JSON.stringify(requestProps)
-          }`,
-          "https://localhost",
-        ),
-      );
+      const url = new URL("https://localhost");
+      url.searchParams.set("loader", loader);
+      url.searchParams.set("request", JSON.stringify(requestProps));
+      const request = new Request(url);
 
       const callHandlerAndCache = async () => {
         const json = await handler(
@@ -120,7 +111,7 @@ export const defineLoader =
 
       if (!matched) {
         status = "miss";
-        stats.miss.add(1);
+        stats.cache.add(1, { status, loader });
 
         return await callHandlerAndCache();
       }
@@ -130,12 +121,12 @@ export const defineLoader =
 
       if (isStale) {
         status = "stale";
-        stats.stale.add(1);
+        stats.cache.add(1, { status, loader });
 
         callHandlerAndCache().catch((error) => console.error(error));
       } else {
         status = "hit";
-        stats.hit.add(1);
+        stats.cache.add(1, { status, loader });
       }
 
       return await matched.json();
@@ -143,7 +134,7 @@ export const defineLoader =
       if (logger) {
         const s = status?.toUpperCase();
         const d = performance.now() - start!;
-        const resolver = cyan(resolverFromChain(ctx.resolveChain));
+        const resolver = cyan(loader);
         const propsStr = gray(JSON.stringify({ props, requestProps }));
         const latency = (d < 300 ? green : d < 700 ? yellow : red)(
           d > 1e3 ? `${(d / 1e3).toFixed(2)}s` : `${d.toFixed(0)}ms`,
@@ -152,7 +143,8 @@ export const defineLoader =
         logger(` -> ${s} ${latency} ${resolver} ${propsStr}`);
       }
 
-      span.addEvent("cache", { status });
-      span.end();
+      const dimension = { loader, status };
+      stats.latency.record(performance.now() - start, dimension);
+      end?.(status);
     }
   };

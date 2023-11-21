@@ -12,6 +12,7 @@ Deno.bench(
     const context: BaseContext = {
       resolveChain: [],
       resolveId: "1",
+      resolverId: "",
       resolvables: releaseJSON,
       resolvers: {},
       memo: {},
@@ -41,6 +42,7 @@ Deno.bench(
   async () => {
     const context: BaseContext = {
       resolveChain: [],
+      resolverId: "",
       resolveId: "1",
       memo: {},
       resolvables: releaseJSON,
@@ -73,6 +75,7 @@ Deno.bench(
   async () => {
     const context = {
       resolveChain: [],
+      resolverId: "",
       resolveId: "1",
       resolvables: releaseJSON,
       resolvers: {},

@@ -1,9 +1,10 @@
 // deno-lint-ignore-file no-explicit-any
-import { Context, Span, Tracer } from "../../deps.ts";
+import { Context, Span, Tracer, ValueType } from "../../deps.ts";
+import { meter } from "../../observability/otel/metrics.ts";
 import { identity } from "../../utils/object.ts";
 import { createServerTimings } from "../../utils/timings.ts";
 import { HintNode, ResolveHints, traverseAny } from "./hints.ts";
-import { ResolveOptions } from "./mod.ts";
+import { ResolveOptions, resolverIdFromResolveChain } from "./mod.ts";
 import {
   isAwaitable,
   notUndefined,
@@ -40,6 +41,7 @@ export interface Monitoring {
 
 export interface BaseContext {
   resolveChain: FieldResolver[];
+  resolverId: string;
   resolveId: string;
   resolve: ResolveFunc;
   monitoring?: Monitoring;
@@ -254,9 +256,11 @@ export const withResolveChain = <TContext extends BaseContext = BaseContext>(
   ctx: TContext,
   ...resolverType: FieldResolver[]
 ): TContext => {
+  const chain = [...ctx.resolveChain, ...resolverType];
   return {
     ...ctx,
-    resolveChain: [...ctx.resolveChain, ...resolverType],
+    resolverId: resolverIdFromResolveChain(chain),
+    resolveChain: chain,
   };
 };
 
@@ -266,19 +270,22 @@ export const withResolveChainOfType = <
   ctx: TContext,
   ...resolverType: string[]
 ): TContext => {
+  const chain = [
+    ...ctx.resolveChain,
+    ...resolverType.map((tp): FieldResolver => ({
+      type: tp in ctx.resolvables
+        ? "resolvable"
+        : tp in ctx.resolvers
+        ? "resolver"
+        : "dangling",
+      value: tp,
+    })),
+  ];
+
   return {
     ...ctx,
-    resolveChain: [
-      ...ctx.resolveChain,
-      ...(resolverType.map((tp) => ({
-        type: tp in ctx.resolvables
-          ? "resolvable"
-          : tp in ctx.resolvers
-          ? "resolver"
-          : "dangling",
-        value: tp,
-      }))),
-    ],
+    resolverId: resolverIdFromResolveChain(chain),
+    resolveChain: chain,
   };
 };
 
@@ -404,6 +411,7 @@ const resolvePropsWithHints = async <
     opts,
   );
 };
+
 /**
  * Invoke the given resolver with the given resolved props, calculate the timings.
  */
@@ -426,8 +434,6 @@ const invokeResolverWithProps = async <
     ctx,
   );
   if (isAwaitable(respOrPromise)) {
-    const timingName = __resolveType.replaceAll("/", ".");
-    end = ctx.monitoring?.timings?.start(timingName);
     await ctx?.monitoring?.tracer?.startActiveSpan?.(__resolveType, {
       attributes: {
         "block.kind": "resolver",
@@ -442,12 +448,11 @@ const invokeResolverWithProps = async <
           const original = respOrPromise;
           respOrPromise = async (...args: any[]) => {
             const resp = await original(...args);
-            end?.();
             span?.end?.();
+
             return resp;
           };
         } else {
-          end?.();
           span?.end?.();
         }
         return respOrPromise;

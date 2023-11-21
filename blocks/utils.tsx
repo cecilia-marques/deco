@@ -87,7 +87,7 @@ export type FnContext<
   TState = {},
   TManifest extends AppManifest = Manifest,
 > = TState & RequestState & {
-  resolveChain: FieldResolver[];
+  resolverId: string;
   monitoring?: Monitoring;
   get: ResolveFunc;
   invoke:
@@ -116,7 +116,7 @@ export const fnContextFromHttpContext = <TState = {}>(
 ): FnContext<TState> => {
   return {
     ...ctx?.context?.state?.global,
-    resolveChain: ctx.resolveChain,
+    resolverId: ctx.resolverId,
     monitoring: ctx.monitoring,
     get: ctx.resolve,
     response: ctx.context.state.response,
