@@ -213,6 +213,8 @@ export const caches: CacheStorage = {
         });
         const { value: metadata } = res;
 
+        console.log({ res, key });
+
         if (!metadata) return;
 
         const { body } = metadata;
